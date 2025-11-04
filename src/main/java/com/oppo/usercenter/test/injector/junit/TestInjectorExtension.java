@@ -38,6 +38,12 @@ public class TestInjectorExtension implements BeforeEachCallback, AfterEachCallb
 
     @Override
     public void afterEach(ExtensionContext context) throws Exception {
+        // 清理 ThreadLocal 数据（防止内存泄漏）
+        TestInjector injector = getStore(context).get(INJECTOR_KEY, TestInjector.class);
+        if (injector != null) {
+            injector.clearThreadLocalData();
+        }
+
         // 清理 Mockito 资源
         AutoCloseable closeable = getStore(context).get(CLOSEABLE_KEY, AutoCloseable.class);
         if (closeable != null) {

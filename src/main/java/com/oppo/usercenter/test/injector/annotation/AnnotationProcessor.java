@@ -121,20 +121,13 @@ public class AnnotationProcessor {
     }
 
     /**
-     * 注册实例到 injector（通过反射访问私有字段）。
+     * 注册实例到 injector。
+     * 使用包可见方法避免反射访问。
      *
      * @param clazz 类型
      * @param instance 实例
      */
     private void registerInstance(Class<?> clazz, Object instance) {
-        try {
-            Field cacheField = TestInjector.class.getDeclaredField("instanceCache");
-            cacheField.setAccessible(true);
-            @SuppressWarnings("unchecked")
-            java.util.Map<Class<?>, Object> cache = (java.util.Map<Class<?>, Object>) cacheField.get(injector);
-            cache.put(clazz, instance);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to register instance", e);
-        }
+        injector.registerInstanceInternal(clazz, instance);
     }
 }

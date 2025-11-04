@@ -32,14 +32,14 @@ public class TestInjector {
     private final Map<Class<?>, Object> instanceCache = new ConcurrentHashMap<>();
 
     /**
-     * 强制 Mock 的类型集合。
+     * 强制 Mock 的类型集合（线程安全）。
      */
-    private final Set<Class<?>> forceMockTypes = new HashSet<>();
+    private final Set<Class<?>> forceMockTypes = ConcurrentHashMap.newKeySet();
 
     /**
-     * 强制真实对象的类型集合。
+     * 强制真实对象的类型集合（线程安全）。
      */
-    private final Set<Class<?>> forceRealTypes = new HashSet<>();
+    private final Set<Class<?>> forceRealTypes = ConcurrentHashMap.newKeySet();
 
     /**
      * 用户注册的实例。
@@ -65,6 +65,11 @@ public class TestInjector {
      * 循环依赖路径记录。
      */
     private final ThreadLocal<List<Class<?>>> dependencyPath = ThreadLocal.withInitial(ArrayList::new);
+
+    /**
+     * Mock 决策缓存（性能优化）。
+     */
+    private final Map<Class<?>, Boolean> mockDecisionCache = new ConcurrentHashMap<>();
 
     /**
      * 静态方法：快速创建实例。
@@ -98,6 +103,7 @@ public class TestInjector {
 
     /**
      * 获取实例（如果不存在则创建）。
+     * 线程安全的获取或创建实例方法。
      *
      * @param clazz 目标类
      * @param <T> 类型参数
@@ -108,24 +114,26 @@ public class TestInjector {
             throw new IllegalArgumentException("Class cannot be null");
         }
 
-        // 检查缓存
-        if (instanceCache.containsKey(clazz)) {
+        // 先检查缓存（避免 computeIfAbsent 嵌套调用问题）
+        Object cached = instanceCache.get(clazz);
+        if (cached != null) {
             debugLog("Return cached instance for: {}", clazz.getName());
-            return (T) instanceCache.get(clazz);
+            return (T) cached;
         }
 
-        // 检查用户注册实例
-        if (userInstances.containsKey(clazz)) {
-            T instance = (T) userInstances.get(clazz);
-            instanceCache.put(clazz, instance);
+        // 检查用户注册的实例
+        Object userInstance = userInstances.get(clazz);
+        if (userInstance != null) {
+            instanceCache.put(clazz, userInstance);
             debugLog("Return user registered instance for: {}", clazz.getName());
-            return instance;
+            return (T) userInstance;
         }
 
-        // 创建新实例
-        T instance = createNewInstance(clazz);
-        instanceCache.put(clazz, instance);
-        return instance;
+        // 使用 computeIfAbsent 原子地创建实例
+        return (T) instanceCache.computeIfAbsent(clazz, k -> {
+            debugLog("Creating new instance for: {}", k.getName());
+            return createNewInstance((Class<?>) k);
+        });
     }
 
     /**
@@ -165,23 +173,26 @@ public class TestInjector {
 
     /**
      * 判断是否应该 Mock。
+     * 使用缓存提高性能。
      *
      * @param clazz 目标类
      * @return true 如果应该 Mock
      */
     private boolean shouldMock(Class<?> clazz) {
-        // 强制 Mock
-        if (forceMockTypes.contains(clazz)) {
-            return true;
-        }
+        return mockDecisionCache.computeIfAbsent(clazz, k -> {
+            // 强制 Mock
+            if (forceMockTypes.contains(k)) {
+                return true;
+            }
 
-        // 强制真实对象
-        if (forceRealTypes.contains(clazz)) {
-            return false;
-        }
+            // 强制真实对象
+            if (forceRealTypes.contains(k)) {
+                return false;
+            }
 
-        // 默认策略：接口或抽象类 → Mock，具体类 → 真实对象
-        return clazz.isInterface() || Modifier.isAbstract(clazz.getModifiers());
+            // 默认策略：接口或抽象类 → Mock，具体类 → 真实对象
+            return k.isInterface() || Modifier.isAbstract(k.getModifiers());
+        });
     }
 
     /**
@@ -247,6 +258,39 @@ public class TestInjector {
         if (debugEnabled) {
             logger.debug(format, args);
         }
+    }
+
+    /**
+     * 清理 ThreadLocal 数据，防止内存泄漏。
+     * 应在测试结束后调用。
+     */
+    public void clearThreadLocalData() {
+        creatingTypes.remove();
+        dependencyPath.remove();
+    }
+
+    /**
+     * 重置所有缓存和配置。
+     * 用于测试隔离或重新初始化。
+     */
+    public void reset() {
+        instanceCache.clear();
+        userInstances.clear();
+        forceMockTypes.clear();
+        forceRealTypes.clear();
+        mockDecisionCache.clear();
+        clearThreadLocalData();
+    }
+
+    /**
+     * 公开方法：注册实例到缓存。
+     * 用于 AnnotationProcessor 避免反射访问。
+     *
+     * @param clazz 类型
+     * @param instance 实例
+     */
+    public void registerInstanceInternal(Class<?> clazz, Object instance) {
+        instanceCache.put(clazz, instance);
     }
 
     /**

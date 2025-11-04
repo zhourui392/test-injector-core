@@ -52,4 +52,19 @@ public class CircularDependencyException extends RuntimeException {
         }
         return sb.toString();
     }
+
+    /**
+     * 重写 getMessage，提供详细的错误信息和解决建议。
+     *
+     * @return 详细的异常消息
+     */
+    @Override
+    public String getMessage() {
+        return super.getMessage() + "\n\n" +
+               "依赖路径:\n  " + formatDependencyPath() + "\n  ← 循环开始\n\n" +
+               "建议解决方案:\n" +
+               "  1. 重新设计依赖关系，打破循环\n" +
+               "  2. 使用 @Spy 替代部分 @InjectMocks\n" +
+               "  3. 使用 Setter 注入（未来版本支持）";
+    }
 }
